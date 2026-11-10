@@ -29,6 +29,10 @@ PHASE3_START = dt.datetime(2026, 11, 2)
 # Это порог для отображения описательного тренда, не гарантия его точности.
 MIN_TREND_POINTS = 7
 MIN_TREND_SPAN_DAYS = 13  # 14 календарных дней включительно
+# По просьбе пользователя тренд текущей фазы показывается раньше полного порога,
+# но с пометкой «предварительно»: на коротком отрезке его сильно сдвигает вода.
+MIN_PRELIM_POINTS = 5
+MIN_PRELIM_SPAN_DAYS = 6
 
 
 def phase_points(dates, weights, start=None, end=None):
@@ -54,6 +58,11 @@ def trend_ready(points):
             and (points[-1][0] - points[0][0]).days >= MIN_TREND_SPAN_DAYS)
 
 
+def prelim_ready(points):
+    return (len(points) >= MIN_PRELIM_POINTS
+            and (points[-1][0] - points[0][0]).days >= MIN_PRELIM_SPAN_DAYS)
+
+
 def main():
     with CSV.open(encoding="utf-8") as source:
         rows = sorted((dt.datetime.strptime(row["date"], "%Y-%m-%d"),
@@ -73,8 +82,10 @@ def main():
             markersize=4, markerfacecolor="white", markeredgewidth=1.5,
             zorder=3, label="Вес")
 
-    for name, points, color, linestyle in phases:
-        if not trend_ready(points):
+    for i, (name, points, color, linestyle) in enumerate(phases):
+        current = i == len(phases) - 1
+        prelim = current and not trend_ready(points)
+        if not (trend_ready(points) or (current and prelim_ready(points))):
             continue
         slope, intercept = fit(points)
         # Линия ограничена наблюдениями своей фазы; экстраполяции нет.
@@ -82,7 +93,7 @@ def main():
         trend = [intercept + slope * (day - endpoints[0]).days for day in endpoints]
         rate = f"{slope * 7:+.2f}".replace(".", ",")
         ax.plot(endpoints, trend, color=color, linestyle=linestyle, linewidth=2,
-                zorder=4, label=f"{name}: тренд {rate} кг/нед")
+                zorder=4, label=f"{name}: тренд {rate} кг/нед" + (" (предварительно)" if prelim else ""))
         print(f"{name}: {len(points)} замеров, {endpoints[0]:%d.%m}–{endpoints[-1]:%d.%m}, {rate} кг/нед")
 
     # Перерывы видны на графике, но не участвуют в регрессиях дефицита.
@@ -136,7 +147,8 @@ def main():
         ax.spines[side].set_visible(False)
 
     if not trend_ready(p3):
-        note = (f"Фаза 3: замеров — {len(p3)}. Тренд появится после ≥7 замеров за ≥14 календарных дней.\n"
+        days = (p3[-1][0] - p3[0][0]).days + 1 if p3 else 0
+        note = (f"Фаза 3: {len(p3)} замеров за {days} дн. — тренд предварительный, надёжным станет после ≥7 замеров за ≥14 дней.\n"
                 "Тренды описывают вес; изменения воды и гликогена не отделены от изменений жировой массы.")
     else:
         note = "Тренды описывают вес; изменения воды и гликогена не отделены от изменений жировой массы."
